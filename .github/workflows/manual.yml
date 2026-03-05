@@ -47,12 +47,12 @@ jobs:
           Invoke-WebRequest -Uri $env:PHPMYADMIN_URL -OutFile phpmyadmin.zip
           Expand-Archive phpmyadmin.zip -DestinationPath $env:BUILD_DIR\www\phpmyadmin
 
-      - name: Copy app files & portable configs
+      - name: Copy app files & templates
         run: |
           if (Test-Path www) { Copy-Item -Path www\* -Destination $env:BUILD_DIR\www -Recurse -Force }
-          if (Test-Path portable-configs) { Copy-Item -Path portable-configs\* -Destination $env:BUILD_DIR -Recurse -Force }
+          if (Test-Path template) { Copy-Item -Path template\* -Destination $env:BUILD_DIR -Recurse -Force }
 
-      - name: Apply portable templates
+      - name: Apply templates (render placeholders)
         run: |
           $root = (Resolve-Path $env:BUILD_DIR).Path
           $phpDir = (Get-ChildItem $env:BUILD_DIR\php -Directory | Select-Object -First 1).FullName
@@ -82,6 +82,7 @@ jobs:
 
           $tplRoot = (Resolve-Path "$root\template").Path
 
+          # Render into vendor locations (overwrite vendor files)
           Render-Template "$tplRoot\httpd.conf" "$root\apache\conf\httpd.conf" $repl
           Render-Template "$tplRoot\php.ini" (Join-Path $phpDir 'php.ini') $repl
           Render-Template "$tplRoot\my.ini" (Join-Path $mysqlDir 'my.ini') $repl
@@ -97,11 +98,6 @@ jobs:
           if (-Not (Test-Path $dataDir) -or ((Get-ChildItem $dataDir -Recurse -ErrorAction SilentlyContinue) -eq $null)) {
             & (Join-Path $mysqlRoot.FullName 'bin\mysqld.exe') --initialize-insecure --basedir="$($mysqlRoot.FullName)" --datadir="$dataDir"
           }
-
-      - name: Add execute permissions / Ensure paths quoted (no-op on Windows but kept for clarity)
-        run: |
-          # No-op on Windows: kept so reviewers know we considered quoting/permissions.
-          Write-Host "Ensure paths are correct and quoted when necessary."
 
       - name: Run smoke tests (optional)
         run: |
