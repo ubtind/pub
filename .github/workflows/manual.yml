@@ -10,7 +10,7 @@ env:
   PHP_URL: https://downloads.php.net/~windows/releases/archives/php-8.5.3-Win32-vs17-x64.zip
   MARIADB_URL: https://archive.mariadb.org//mariadb-12.2.2/winx64-packages/mariadb-12.2.2-winx64.zip
   PHPMYADMIN_URL: https://files.phpmyadmin.net/phpMyAdmin/5.2.3/phpMyAdmin-5.2.3-all-languages.zip
-  APACHE_PORT: '80'
+  APACHE_PORT: '8080'
   MYSQL_PORT: '3306'
 
 jobs:
@@ -27,16 +27,18 @@ jobs:
       - name: Set computed vars
         id: vars
         run: |
-          # compute artifact name and tag using GitHub expressions inside the runner
           $refName = "${{ github.ref_name }}"
           if ([string]::IsNullOrEmpty($refName)) { $refName = "build-${{ github.run_number }}" }
           $artifact = "local-$refName.zip"
           $tag = "${{ github.ref_name }}"
           if ([string]::IsNullOrEmpty($tag)) { $tag = "local-build-${{ github.run_number }}" }
-          Write-Output "artifact_name=$artifact"
-          Write-Output "release_tag=$tag"
-          echo "::set-output name=artifact_name::$artifact"
-          echo "::set-output name=release_tag::$tag"
+
+          # export step outputs (use GITHUB_OUTPUT) and make artifact available as env var
+          "artifact_name=$artifact" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "release_tag=$tag"     | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+          # also export artifact_name into GITHUB_ENV so subsequent steps can use $env:artifact_name
+          "artifact_name=$artifact" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Prepare build dir
         run: |
@@ -46,33 +48,33 @@ jobs:
       - name: Download Apache
         run: |
           Invoke-WebRequest -AllowInsecureRedirect -Uri $env:APACHE_URL -OutFile apache.zip
-          Expand-Archive apache.zip -DestinationPath $env:BUILD_DIR\apache
+          Expand-Archive apache.zip -DestinationPath (Join-Path $env:BUILD_DIR 'apache')
 
       - name: Download PHP
         run: |
           Invoke-WebRequest -AllowInsecureRedirect -Uri $env:PHP_URL -OutFile php.zip
-          Expand-Archive php.zip -DestinationPath $env:BUILD_DIR\php
+          Expand-Archive php.zip -DestinationPath (Join-Path $env:BUILD_DIR 'php')
 
       - name: Download MariaDB
         run: |
           Invoke-WebRequest -AllowInsecureRedirect -Uri $env:MARIADB_URL -OutFile mariadb.zip
-          Expand-Archive mariadb.zip -DestinationPath $env:BUILD_DIR\mysql
+          Expand-Archive mariadb.zip -DestinationPath (Join-Path $env:BUILD_DIR 'mysql')
 
       - name: Download phpMyAdmin
         run: |
           Invoke-WebRequest -AllowInsecureRedirect -Uri $env:PHPMYADMIN_URL -OutFile phpmyadmin.zip
-          Expand-Archive phpmyadmin.zip -DestinationPath $env:BUILD_DIR\www\phpmyadmin
+          Expand-Archive phpmyadmin.zip -DestinationPath (Join-Path $env:BUILD_DIR 'www\phpmyadmin')
 
       - name: Copy app files & templates
         run: |
-          if (Test-Path www) { Copy-Item -Path www\* -Destination $env:BUILD_DIR\www -Recurse -Force }
-          if (Test-Path template) { Copy-Item -Path template\* -Destination $env:BUILD_DIR -Recurse -Force }
+          if (Test-Path www) { Copy-Item -Path (Join-Path 'www' '*') -Destination (Join-Path $env:BUILD_DIR 'www') -Recurse -Force }
+          if (Test-Path template) { Copy-Item -Path (Join-Path 'template' '*') -Destination $env:BUILD_DIR -Recurse -Force }
 
       - name: Apply templates (render placeholders)
         run: |
           $root = (Resolve-Path $env:BUILD_DIR).Path
-          $phpDir = (Get-ChildItem $env:BUILD_DIR\php -Directory | Select-Object -First 1).FullName
-          $mysqlDir = (Get-ChildItem $env:BUILD_DIR\mysql -Directory | Select-Object -First 1).FullName
+          $phpDir = (Get-ChildItem (Join-Path $env:BUILD_DIR 'php') -Directory | Select-Object -First 1).FullName
+          $mysqlDir = (Get-ChildItem (Join-Path $env:BUILD_DIR 'mysql') -Directory | Select-Object -First 1).FullName
           $wwwDir = Join-Path $root 'www'
           New-Item -ItemType Directory -Path $wwwDir -Force | Out-Null
 
@@ -83,7 +85,7 @@ jobs:
             }
             $dir = Split-Path $outPath -Parent
             if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
-            $text | Set-Content $outPath -Encoding ASCII
+            $text | Set-Content $outPath -Encoding UTF8
           }
 
           $repl = @{
@@ -93,46 +95,51 @@ jobs:
             'MYSQL_BASEDIR' = $mysqlDir
             'MYSQL_DATADIR' = Join-Path $mysqlDir 'data'
             'BLOWFISH_SECRET' = [System.Guid]::NewGuid().ToString()
-            'APACHE_SERVERROOT' = (Resolve-Path "$root\apache").Path
+            'APACHE_SERVERROOT' = (Resolve-Path (Join-Path $root 'apache')).Path
           }
 
-          $tplRoot = (Resolve-Path "$root\template").Path
+          $tplRoot = (Resolve-Path (Join-Path $root 'template')).Path
 
-          Render-Template "$tplRoot\httpd.conf" "$root\apache\conf\httpd.conf" $repl
-          Render-Template "$tplRoot\php.ini" (Join-Path $phpDir 'php.ini') $repl
-          Render-Template "$tplRoot\my.ini" (Join-Path $mysqlDir 'my.ini') $repl
+          Render-Template (Join-Path $tplRoot 'httpd.conf') (Join-Path $root 'apache\conf\httpd.conf') $repl
+          Render-Template (Join-Path $tplRoot 'php.ini') (Join-Path $phpDir 'php.ini') $repl
+          Render-Template (Join-Path $tplRoot 'my.ini') (Join-Path $mysqlDir 'my.ini') $repl
           $pmaDir = Join-Path $wwwDir 'phpmyadmin'
-          Render-Template "$tplRoot\config.inc.php" (Join-Path $pmaDir 'config.inc.php') $repl
-          Render-Template "$tplRoot\start.bat" (Join-Path $root 'start.bat') $repl
-          Render-Template "$tplRoot\stop.bat" (Join-Path $root 'stop.bat') $repl
+          Render-Template (Join-Path $tplRoot 'config.inc.php') (Join-Path $pmaDir 'config.inc.php') $repl
+          Render-Template (Join-Path $tplRoot 'start.bat') (Join-Path $root 'start.bat') $repl
+          Render-Template (Join-Path $tplRoot 'stop.bat') (Join-Path $root 'stop.bat') $repl
 
       - name: Initialize MariaDB data dir if empty
         run: |
-          $mysqlRoot = Get-ChildItem $env:BUILD_DIR\mysql -Directory | Select-Object -First 1
+          $mysqlRoot = Get-ChildItem (Join-Path $env:BUILD_DIR 'mysql') -Directory | Select-Object -First 1
           $dataDir = Join-Path $mysqlRoot.FullName 'data'
-          if (-Not (Test-Path $dataDir) -or ((Get-ChildItem $dataDir -Recurse -ErrorAction SilentlyContinue) -eq $null)) {
+          if (-not (Test-Path $dataDir)) { New-Item -ItemType Directory -Path $dataDir -Force | Out-Null }
+          if ((Get-ChildItem $dataDir -Recurse -ErrorAction SilentlyContinue) -eq $null) {
             & (Join-Path $mysqlRoot.FullName 'bin\mysqld.exe') --initialize-insecure --basedir="$($mysqlRoot.FullName)" --datadir="$dataDir"
           }
 
       - name: Run smoke tests (optional)
         run: |
           $root = (Resolve-Path $env:BUILD_DIR).Path
-          Start-Process -FilePath (Join-Path $root 'mysql\bin\mysqld.exe') -ArgumentList "--defaults-file=$($root)\mysql\my.ini" -NoNewWindow
-          Start-Sleep -Seconds 6
-          Start-Process -FilePath (Join-Path $root 'apache\bin\httpd.exe') -ArgumentList "-f",$root+"\apache\conf\httpd.conf" -NoNewWindow
-          Start-Sleep -Seconds 6
+          $mysqlExe = Join-Path $root 'mysql\bin\mysqld.exe'
+          $apacheExe = Join-Path $root 'apache\bin\httpd.exe'
+
+          $mysq = Start-Process -FilePath $mysqlExe -ArgumentList "--defaults-file=$($root)\mysql\my.ini" -PassThru
+          Start-Sleep -Seconds 10
+          $httpd = Start-Process -FilePath $apacheExe -ArgumentList "-f",$root+"\apache\conf\httpd.conf" -PassThru
+          Start-Sleep -Seconds 10
           try {
-            Invoke-WebRequest -UseBasicParsing -Uri "http://localhost:$env:APACHE_PORT/" -TimeoutSec 10 -ErrorAction Stop | Out-Null
-            Invoke-WebRequest -UseBasicParsing -Uri "http://localhost:$env:APACHE_PORT/phpmyadmin/" -TimeoutSec 10 -ErrorAction Stop | Out-Null
+            Invoke-WebRequest -Uri "http://localhost:$env:APACHE_PORT/" -TimeoutSec 15 -ErrorAction Stop | Out-Null
+            Invoke-WebRequest -Uri "http://localhost:$env:APACHE_PORT/phpmyadmin/" -TimeoutSec 15 -ErrorAction Stop | Out-Null
           } finally {
-            Stop-Process -Name httpd -Force -ErrorAction SilentlyContinue
-            Stop-Process -Name mysqld -Force -ErrorAction SilentlyContinue
+            if ($httpd) { Stop-Process -Id $httpd.Id -Force -ErrorAction SilentlyContinue }
+            if ($mysq)  { Stop-Process -Id $mysq.Id -Force -ErrorAction SilentlyContinue }
           }
 
       - name: Zip local bundle
         run: |
           $resolved = (Resolve-Path $env:BUILD_DIR).Path
-          Compress-Archive -Path "$resolved\*" -DestinationPath "${{ steps.vars.outputs.artifact_name }}" -Force
+          $artifact = $env:artifact_name
+          Compress-Archive -Path (Join-Path $resolved '*') -DestinationPath $artifact -Force
 
       - name: Create release
         id: release
