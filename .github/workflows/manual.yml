@@ -45,22 +45,22 @@ jobs:
 
       - name: Download Apache
         run: |
-          Invoke-WebRequest -Uri $env:APACHE_URL -OutFile apache.zip
+          Invoke-WebRequest -AllowInsecureRedirect -Uri $env:APACHE_URL -OutFile apache.zip
           Expand-Archive apache.zip -DestinationPath $env:BUILD_DIR\apache
 
       - name: Download PHP
         run: |
-          Invoke-WebRequest -Uri $env:PHP_URL -OutFile php.zip
+          Invoke-WebRequest -AllowInsecureRedirect -Uri $env:PHP_URL -OutFile php.zip
           Expand-Archive php.zip -DestinationPath $env:BUILD_DIR\php
 
       - name: Download MariaDB
         run: |
-          Invoke-WebRequest -Uri $env:MARIADB_URL -OutFile mariadb.zip
+          Invoke-WebRequest -AllowInsecureRedirect -Uri $env:MARIADB_URL -OutFile mariadb.zip
           Expand-Archive mariadb.zip -DestinationPath $env:BUILD_DIR\mysql
 
       - name: Download phpMyAdmin
         run: |
-          Invoke-WebRequest -Uri $env:PHPMYADMIN_URL -OutFile phpmyadmin.zip
+          Invoke-WebRequest -AllowInsecureRedirect -Uri $env:PHPMYADMIN_URL -OutFile phpmyadmin.zip
           Expand-Archive phpmyadmin.zip -DestinationPath $env:BUILD_DIR\www\phpmyadmin
 
       - name: Copy app files & templates
