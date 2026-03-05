@@ -1,4 +1,4 @@
-name: Build Portable AMP
+name: Build Portable WAMP + phpMyAdmin Release
 on:
   push:
     branches: [ main ]
@@ -19,65 +19,64 @@ jobs:
     runs-on: windows-latest
 
     steps:
-    - name: Checkout
-      uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-    - name: Prepare build dir
-      run: |
-        Remove-Item -Recurse -Force $env:BUILD_DIR -ErrorAction SilentlyContinue
-        New-Item -ItemType Directory -Path $env:BUILD_DIR | Out-Null
+      - name: Prepare build dir
+        run: |
+          Remove-Item -Recurse -Force $env:BUILD_DIR -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Path $env:BUILD_DIR | Out-Null
 
-    - name: Download Apache
-      run: |
-        Invoke-WebRequest -Uri $env:APACHE_URL -OutFile apache.zip
-        Expand-Archive apache.zip -DestinationPath $env:BUILD_DIR\apache
+      - name: Download Apache
+        run: |
+          Invoke-WebRequest -Uri $env:APACHE_URL -OutFile apache.zip
+          Expand-Archive apache.zip -DestinationPath $env:BUILD_DIR\apache
 
-    - name: Download PHP
-      run: |
-        Invoke-WebRequest -Uri $env:PHP_URL -OutFile php.zip
-        Expand-Archive php.zip -DestinationPath $env:BUILD_DIR\php
+      - name: Download PHP
+        run: |
+          Invoke-WebRequest -Uri $env:PHP_URL -OutFile php.zip
+          Expand-Archive php.zip -DestinationPath $env:BUILD_DIR\php
 
-    - name: Download MariaDB
-      run: |
-        Invoke-WebRequest -Uri $env:MARIADB_URL -OutFile mariadb.zip
-        Expand-Archive mariadb.zip -DestinationPath $env:BUILD_DIR\mysql
+      - name: Download MariaDB
+        run: |
+          Invoke-WebRequest -Uri $env:MARIADB_URL -OutFile mariadb.zip
+          Expand-Archive mariadb.zip -DestinationPath $env:BUILD_DIR\mysql
 
-    - name: Download phpMyAdmin
-      run: |
-        Invoke-WebRequest -Uri $env:PHPMYADMIN_URL -OutFile phpmyadmin.zip
-        Expand-Archive phpmyadmin.zip -DestinationPath $env:BUILD_DIR\www\phpmyadmin
+      - name: Download phpMyAdmin
+        run: |
+          Invoke-WebRequest -Uri $env:PHPMYADMIN_URL -OutFile phpmyadmin.zip
+          Expand-Archive phpmyadmin.zip -DestinationPath $env:BUILD_DIR\www\phpmyadmin
 
-    - name: Copy app files & portable configs
-      run: |
-        # copy repo www (if any) and portable-configs folder into build dir
-        if (Test-Path www) { Copy-Item -Path www\* -Destination $env:BUILD_DIR\www -Recurse -Force }
-        if (Test-Path portable-configs) { Copy-Item -Path portable-configs\* -Destination $env:BUILD_DIR -Recurse -Force }
+      - name: Copy app files & portable configs
+        run: |
+          if (Test-Path www) { Copy-Item -Path www\* -Destination $env:BUILD_DIR\www -Recurse -Force }
+          if (Test-Path portable-configs) { Copy-Item -Path portable-configs\* -Destination $env:BUILD_DIR -Recurse -Force }
 
-    - name: Apply portable httpd.conf tweaks
-      run: |
-        $httpdConf = Get-ChildItem $env:BUILD_DIR\apache -Recurse -Filter httpd.conf | Select-Object -First 1
-        if ($httpdConf) {
-          (Get-Content $httpdConf.FullName) |
-            ForEach-Object {
-              $_ -replace 'Listen 80',"Listen $env:APACHE_PORT" `
-                 -replace 'DocumentRoot ".*?"','DocumentRoot "' + (Resolve-Path $env:BUILD_DIR\www) + '"' `
-                 -replace 'ServerName .*?:80','ServerName localhost:' + $env:APACHE_PORT
-            } | Set-Content $httpdConf.FullName
-        }
+      - name: Apply portable httpd.conf tweaks
+        run: |
+          $httpdConf = Get-ChildItem $env:BUILD_DIR\apache -Recurse -Filter httpd.conf | Select-Object -First 1
+          if ($httpdConf) {
+            (Get-Content $httpdConf.FullName) |
+              ForEach-Object {
+                $_ -replace 'Listen 80',"Listen $env:APACHE_PORT" `
+                   -replace 'DocumentRoot ".*?"','DocumentRoot "' + (Resolve-Path $env:BUILD_DIR\www) + '"' `
+                   -replace 'ServerName .*?:80','ServerName localhost:' + $env:APACHE_PORT
+              } | Set-Content $httpdConf.FullName
+          }
 
-    - name: Create php.ini (minimal) and enable extensions
-      run: |
-        $phpDir = Get-ChildItem $env:BUILD_DIR\php -Directory | Select-Object -First 1
-        $phpIniPath = Join-Path $phpDir.FullName 'php.ini'
-        if (-Not (Test-Path $phpIniPath)) {
-          Copy-Item (Join-Path $phpDir.FullName 'php.ini-production') $phpIniPath -ErrorAction SilentlyContinue
-        }
-        (Get-Content $phpIniPath) -replace ';extension=mysqli','extension=mysqli' -replace ';extension=pdo_mysql','extension=pdo_mysql' | Set-Content $phpIniPath
+      - name: Create php.ini (minimal) and enable extensions
+        run: |
+          $phpDir = Get-ChildItem $env:BUILD_DIR\php -Directory | Select-Object -First 1
+          $phpIniPath = Join-Path $phpDir.FullName 'php.ini'
+          if (-Not (Test-Path $phpIniPath)) {
+            Copy-Item (Join-Path $phpDir.FullName 'php.ini-production') $phpIniPath -ErrorAction SilentlyContinue
+          }
+          (Get-Content $phpIniPath) -replace ';extension=mysqli','extension=mysqli' -replace ';extension=pdo_mysql','extension=pdo_mysql' | Set-Content $phpIniPath
 
-    - name: Create my.ini for MariaDB (portable)
-      run: |
-        $mysqlRoot = Get-ChildItem $env:BUILD_DIR\mysql -Directory | Select-Object -First 1
-        $myIni = @"
+      - name: Create my.ini for MariaDB (portable)
+        run: |
+          $mysqlRoot = Get-ChildItem $env:BUILD_DIR\mysql -Directory | Select-Object -First 1
+          $myIni = @"
 [mysqld]
 basedir = $($mysqlRoot.FullName)
 datadir = $($mysqlRoot.FullName)\data
@@ -85,21 +84,21 @@ port = $env:MYSQL_PORT
 skip-networking = 0
 bind-address = 127.0.0.1
 "@
-        $myIniPath = Join-Path $mysqlRoot.FullName 'my.ini'
-        $myIni | Out-File -FilePath $myIniPath -Encoding ASCII
+          $myIniPath = Join-Path $mysqlRoot.FullName 'my.ini'
+          $myIni | Out-File -FilePath $myIniPath -Encoding ASCII
 
-    - name: Initialize MariaDB data dir if empty
-      run: |
-        $mysqlRoot = Get-ChildItem $env:BUILD_DIR\mysql -Directory | Select-Object -First 1
-        $dataDir = Join-Path $mysqlRoot.FullName 'data'
-        if (-Not (Test-Path $dataDir) -or ((Get-ChildItem $dataDir -Recurse -ErrorAction SilentlyContinue) -eq $null)) {
-          & (Join-Path $mysqlRoot.FullName 'bin\mysqld.exe') --initialize-insecure --basedir="$($mysqlRoot.FullName)" --datadir="$dataDir"
-        }
+      - name: Initialize MariaDB data dir if empty
+        run: |
+          $mysqlRoot = Get-ChildItem $env:BUILD_DIR\mysql -Directory | Select-Object -First 1
+          $dataDir = Join-Path $mysqlRoot.FullName 'data'
+          if (-Not (Test-Path $dataDir) -or ((Get-ChildItem $dataDir -Recurse -ErrorAction SilentlyContinue) -eq $null)) {
+            & (Join-Path $mysqlRoot.FullName 'bin\mysqld.exe') --initialize-insecure --basedir="$($mysqlRoot.FullName)" --datadir="$dataDir"
+          }
 
-    - name: Create phpMyAdmin config.inc.php
-      run: |
-        $pmaDir = Join-Path (Resolve-Path $env:BUILD_DIR\www) 'phpmyadmin'
-        $cfg = @"
+      - name: Create phpMyAdmin config.inc.php
+        run: |
+          $pmaDir = Join-Path (Resolve-Path $env:BUILD_DIR\www) 'phpmyadmin'
+          $cfg = @"
 <?php
 /* Auto-generated config */
 \$i = 0;
@@ -114,58 +113,58 @@ bind-address = 127.0.0.1
 \$cfg['SaveDir'] = '';
 return \$cfg;
 "@
-        $cfg | Out-File -FilePath (Join-Path $pmaDir 'config.inc.php') -Encoding ASCII
+          $cfg | Out-File -FilePath (Join-Path $pmaDir 'config.inc.php') -Encoding ASCII
 
-    - name: Add start/stop scripts
-      run: |
-        $root = (Resolve-Path $env:BUILD_DIR)
-        $start = @"
+      - name: Add start/stop scripts
+        run: |
+          $root = (Resolve-Path $env:BUILD_DIR)
+          $start = "@
 @echo off
 SET ROOT=%~dp0
-start ""mysql"" "%ROOT%\mysql\bin\mysqld.exe" --defaults-file="%ROOT%\mysql\my.ini"
+start ""mysql"" ""%ROOT%\mysql\bin\mysqld.exe"" --defaults-file=""%ROOT%\mysql\my.ini""
 timeout /t 6 /nobreak >nul
-start ""apache"" "%ROOT%\apache\bin\httpd.exe" -f "%ROOT%\apache\conf\httpd.conf"
-echo Started portable WAMP.
+start ""apache"" ""%ROOT%\apache\bin\httpd.exe"" -f ""%ROOT%\apache\conf\httpd.conf""
+echo Started local WAMP.
 "@
-        $stop = @"
+          $stop = "@
 @echo off
 SET ROOT=%~dp0
-"%ROOT%\apache\bin\httpd.exe" -k stop
-"%ROOT%\mysql\bin\mysqladmin.exe" -u root shutdown
-echo Stopped portable WAMP.
+""%ROOT%\apache\bin\httpd.exe"" -k stop
+""%ROOT%\mysql\bin\mysqladmin.exe"" -u root shutdown
+echo Stopped local WAMP.
 "@
-        $start | Out-File -FilePath (Join-Path $root 'start.bat') -Encoding ASCII
-        $stop | Out-File -FilePath (Join-Path $root 'stop.bat') -Encoding ASCII
+          $start | Out-File -FilePath (Join-Path $root 'start.bat') -Encoding ASCII
+          $stop | Out-File -FilePath (Join-Path $root 'stop.bat') -Encoding ASCII
 
-    - name: Run smoke tests (optional)
-      run: |
-        $root = (Resolve-Path $env:BUILD_DIR)
-        Start-Process -FilePath (Join-Path $root 'mysql\bin\mysqld.exe') -ArgumentList "--defaults-file=$($root)\mysql\my.ini" -NoNewWindow
-        Start-Sleep -Seconds 6
-        Start-Process -FilePath (Join-Path $root 'apache\bin\httpd.exe') -ArgumentList "-f",$root+"\apache\conf\httpd.conf" -NoNewWindow
-        Start-Sleep -Seconds 6
-        curl --fail http://localhost:$env:APACHE_PORT/ || (Write-Error 'HTTP root failed' -ErrorAction Stop)
-        curl --fail http://localhost:$env:APACHE_PORT/phpmyadmin/ || (Write-Error 'phpMyAdmin failed' -ErrorAction Stop)
-        Stop-Process -Name httpd -Force -ErrorAction SilentlyContinue
-        Stop-Process -Name mysqld -Force -ErrorAction SilentlyContinue
+      - name: Run smoke tests (optional)
+        run: |
+          $root = (Resolve-Path $env:BUILD_DIR)
+          Start-Process -FilePath (Join-Path $root 'mysql\bin\mysqld.exe') -ArgumentList "--defaults-file=$($root)\mysql\my.ini" -NoNewWindow
+          Start-Sleep -Seconds 6
+          Start-Process -FilePath (Join-Path $root 'apache\bin\httpd.exe') -ArgumentList "-f",$root+"\apache\conf\httpd.conf" -NoNewWindow
+          Start-Sleep -Seconds 6
+          curl --fail http://localhost:$env:APACHE_PORT/ || (Write-Error 'HTTP root failed' -ErrorAction Stop)
+          curl --fail http://localhost:$env:APACHE_PORT/phpmyadmin/ || (Write-Error 'phpMyAdmin failed' -ErrorAction Stop)
+          Stop-Process -Name httpd -Force -ErrorAction SilentlyContinue
+          Stop-Process -Name mysqld -Force -ErrorAction SilentlyContinue
 
-    - name: Zip portable bundle
-      run: |
-        Compress-Archive -Path $env:BUILD_DIR\* -DestinationPath $env:ARTIFACT_NAME -Force
+      - name: Zip local bundle
+        run: |
+          Compress-Archive -Path $env:BUILD_DIR\* -DestinationPath $env:ARTIFACT_NAME -Force
 
-    - name: Create release
-      id: release
-      uses: softprops/action-gh-release@v2
-      with:
-        tag_name: ${{ github.ref_name || 'portable-build-' + github.run_number }}
-        name: Portable WAMP Build ${{ github.run_number }}
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create release
+        id: release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name || 'local-build-' + github.run_number }}
+          name: Local WAMP Build ${{ github.run_number }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: Upload release asset
-      uses: actions/upload-release-asset@v1
-      with:
-        upload_url: ${{ steps.release.outputs.upload_url }}
-        asset_path: ${{ env:ARTIFACT_NAME }}
-        asset_name: ${{ env:ARTIFACT_NAME }}
-        asset_content_type: application/zip
+      - name: Upload release asset
+        uses: actions/upload-release-asset@v1
+        with:
+          upload_url: ${{ steps.release.outputs.upload_url }}
+          asset_path: ${{ env:ARTIFACT_NAME }}
+          asset_name: ${{ env:ARTIFACT_NAME }}
+          asset_content_type: application/zip
