@@ -125,10 +125,20 @@ jobs:
 
       - name: Apply templates (render placeholders)
         run: |
-          $root = (Resolve-Path $env:BUILD_DIR).Path
-          $phpDir = (Get-ChildItem (Join-Path $env:BUILD_DIR 'php') -Directory | Select-Object -First 1).FullName
-          $mysqlDir = (Get-ChildItem (Join-Path $env:BUILD_DIR 'mysql') -Directory | Select-Object -First 1).FullName
-          $wwwDir = Join-Path $root 'www'
+          # Use repo root to find template/ in checked-out repo, avoid duplicated segments
+          $repoRoot = $env:GITHUB_WORKSPACE
+          if (-not $repoRoot) { $repoRoot = (Get-Location).Path }
+          $buildRoot = (Resolve-Path $env:BUILD_DIR).Path
+
+          $tplRoot = Join-Path $repoRoot 'template'
+          if (-not (Test-Path $tplRoot)) {
+            Write-Host "Template dir not found at $tplRoot — skipping rendering."
+            return
+          }
+
+          $phpDir = (Get-ChildItem (Join-Path $buildRoot 'php') -Directory | Select-Object -First 1).FullName
+          $mysqlDir = (Get-ChildItem (Join-Path $buildRoot 'mysql') -Directory | Select-Object -First 1).FullName
+          $wwwDir = Join-Path $buildRoot 'www'
           New-Item -ItemType Directory -Path $wwwDir -Force | Out-Null
 
           function Render-Template($tplPath,$outPath,$replacements){
@@ -148,18 +158,16 @@ jobs:
             'MYSQL_BASEDIR' = $mysqlDir
             'MYSQL_DATADIR' = Join-Path $mysqlDir 'data'
             'BLOWFISH_SECRET' = [System.Guid]::NewGuid().ToString()
-            'APACHE_SERVERROOT' = (Resolve-Path (Join-Path $root 'apache')).Path
+            'APACHE_SERVERROOT' = (Resolve-Path (Join-Path $buildRoot 'apache')).Path
           }
 
-          $tplRoot = (Resolve-Path (Join-Path $root 'template')).Path
-
-          Render-Template (Join-Path $tplRoot 'httpd.conf') (Join-Path $root 'apache\conf\httpd.conf') $repl
+          Render-Template (Join-Path $tplRoot 'httpd.conf') (Join-Path $buildRoot 'apache\conf\httpd.conf') $repl
           Render-Template (Join-Path $tplRoot 'php.ini') (Join-Path $phpDir 'php.ini') $repl
           Render-Template (Join-Path $tplRoot 'my.ini') (Join-Path $mysqlDir 'my.ini') $repl
           $pmaDir = Join-Path $wwwDir 'phpmyadmin'
           Render-Template (Join-Path $tplRoot 'config.inc.php') (Join-Path $pmaDir 'config.inc.php') $repl
-          Render-Template (Join-Path $tplRoot 'start.bat') (Join-Path $root 'start.bat') $repl
-          Render-Template (Join-Path $tplRoot 'stop.bat') (Join-Path $root 'stop.bat') $repl
+          Render-Template (Join-Path $tplRoot 'start.bat') (Join-Path $buildRoot 'start.bat') $repl
+          Render-Template (Join-Path $tplRoot 'stop.bat') (Join-Path $buildRoot 'stop.bat') $repl
 
       - name: Initialize MariaDB data dir if empty
         run: |
