@@ -6,7 +6,6 @@ on:
 
 env:
   BUILD_DIR: local
-  ARTIFACT_NAME: local-${{ github.ref_name || 'build-' + github.run_number }}.zip
   APACHE_URL: https://downloads.apache.org//httpd/httpd-2.4.57-win64-vs16.zip
   PHP_URL: https://windows.php.net/downloads/releases/php-8.2.19-Win32-vs16-x64.zip
   MARIADB_URL: https://downloads.mariadb.org/f/mariadb-10.6.13/winx64-packages/mariadb-10.6.13-winx64.zip
@@ -17,10 +16,27 @@ env:
 jobs:
   build:
     runs-on: windows-latest
+    outputs:
+      artifact_name: ${{ steps.vars.outputs.artifact_name }}
+      release_tag: ${{ steps.vars.outputs.release_tag }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Set computed vars
+        id: vars
+        run: |
+          # compute artifact name and tag using GitHub expressions inside the runner
+          $refName = "${{ github.ref_name }}"
+          if ([string]::IsNullOrEmpty($refName)) { $refName = "build-${{ github.run_number }}" }
+          $artifact = "local-$refName.zip"
+          $tag = "${{ github.ref_name }}"
+          if ([string]::IsNullOrEmpty($tag)) { $tag = "local-build-${{ github.run_number }}" }
+          Write-Output "artifact_name=$artifact"
+          Write-Output "release_tag=$tag"
+          echo "::set-output name=artifact_name::$artifact"
+          echo "::set-output name=release_tag::$tag"
 
       - name: Prepare build dir
         run: |
@@ -82,7 +98,6 @@ jobs:
 
           $tplRoot = (Resolve-Path "$root\template").Path
 
-          # Render into vendor locations (overwrite vendor files)
           Render-Template "$tplRoot\httpd.conf" "$root\apache\conf\httpd.conf" $repl
           Render-Template "$tplRoot\php.ini" (Join-Path $phpDir 'php.ini') $repl
           Render-Template "$tplRoot\my.ini" (Join-Path $mysqlDir 'my.ini') $repl
@@ -117,14 +132,14 @@ jobs:
       - name: Zip local bundle
         run: |
           $resolved = (Resolve-Path $env:BUILD_DIR).Path
-          Compress-Archive -Path "$resolved\*" -DestinationPath $env:ARTIFACT_NAME -Force
+          Compress-Archive -Path "$resolved\*" -DestinationPath "${{ steps.vars.outputs.artifact_name }}" -Force
 
       - name: Create release
         id: release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name || 'local-build-' + github.run_number }}
-          name: Local WAMP Build ${{ github.run_number }}
+          tag_name: ${{ steps.vars.outputs.release_tag }}
+          name: ${{ steps.vars.outputs.release_tag }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -132,6 +147,6 @@ jobs:
         uses: actions/upload-release-asset@v1
         with:
           upload_url: ${{ steps.release.outputs.upload_url }}
-          asset_path: ${{ env:ARTIFACT_NAME }}
-          asset_name: ${{ env:ARTIFACT_NAME }}
+          asset_path: ${{ steps.vars.outputs.artifact_name }}
+          asset_name: ${{ steps.vars.outputs.artifact_name }}
           asset_content_type: application/zip
