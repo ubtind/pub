@@ -1,4 +1,4 @@
-name: Build Portable WAMP + phpMyAdmin Release
+name: Portable Apache, PHP, MySQL + phpMyAdmin Release
 on:
   push:
     branches: [ main ]
@@ -6,12 +6,12 @@ on:
 
 env:
   BUILD_DIR: local
-  APACHE_URL: https://downloads.apache.org//httpd/httpd-2.4.57-win64-vs16.zip
-  PHP_URL: https://windows.php.net/downloads/releases/php-8.2.19-Win32-vs16-x64.zip
-  MARIADB_URL: https://downloads.mariadb.org/f/mariadb-10.6.13/winx64-packages/mariadb-10.6.13-winx64.zip
-  PHPMYADMIN_URL: https://www.phpmyadmin.net/downloads/phpMyAdmin-latest-all-languages.zip
-  APACHE_PORT: '8080'
-  MYSQL_PORT: '3307'
+  APACHE_URL: https://www.apachelounge.com/download/VS18/binaries/httpd-2.4.66-260223-Win64-VS18.zip
+  PHP_URL: https://downloads.php.net/~windows/releases/archives/php-8.5.3-Win32-vs17-x64.zip
+  MARIADB_URL: https://archive.mariadb.org//mariadb-12.2.2/winx64-packages/mariadb-12.2.2-winx64.zip
+  PHPMYADMIN_URL: https://files.phpmyadmin.net/phpMyAdmin/5.2.3/phpMyAdmin-5.2.3-all-languages.zip
+  APACHE_PORT: '80'
+  MYSQL_PORT: '3306'
 
 jobs:
   build:
