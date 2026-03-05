@@ -1,3 +1,4 @@
+```yaml
 name: Portable WAMP Release
 
 on:
@@ -17,6 +18,10 @@ env:
 jobs:
   build:
     runs-on: windows-latest
+    outputs:
+      artifact_name: ${{ steps.vars.outputs.artifact_name }}
+      release_tag: ${{ steps.vars.outputs.release_tag }}
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -31,7 +36,7 @@ jobs:
           if ([string]::IsNullOrEmpty($tag)) { $tag = "wamp-build-${{ github.run_number }}" }
 
           "artifact_name=$artifact" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-          "release_tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "release_tag=$tag"     | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           "artifact_name=$artifact" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Prepare build dir
@@ -39,25 +44,122 @@ jobs:
           Remove-Item -Recurse -Force $env:BUILD_DIR -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Path $env:BUILD_DIR | Out-Null
 
-      # Apache, PHP, MariaDB, phpMyAdmin download/extract steps here (unchanged)...
+      - name: Download & extract Apache
+        run: |
+          $url = $env:APACHE_URL
+          $out = 'apache.zip'
+          Write-Host "Downloading $url -> $out"
+          $wc = New-Object System.Net.WebClient
+          $wc.DownloadFile($url, $out)
+          if (-not (Test-Path $out)) { throw "Download failed: $out missing" }
+          $fi = Get-Item $out
+          if ($fi.Length -lt 1024) { throw "Downloaded file too small ($($fi.Length) bytes)" }
+          $dest = Join-Path $env:BUILD_DIR 'apache'
+          try {
+            Expand-Archive -LiteralPath $out -DestinationPath $dest -Force
+          } catch {
+            Write-Host "Expand-Archive failed, falling back to .NET: $($_.Exception.Message)"
+            Add-Type -AssemblyName System.IO.Compression.FileSystem
+            [System.IO.Compression.ZipFile]::ExtractToDirectory((Resolve-Path $out).Path, $dest)
+          }
+
+      - name: Download & extract PHP
+        run: |
+          $url = $env:PHP_URL
+          $out = 'php.zip'
+          Write-Host "Downloading $url -> $out"
+          $wc = New-Object System.Net.WebClient
+          $wc.DownloadFile($url, $out)
+          if (-not (Test-Path $out)) { throw "Download failed: $out missing" }
+          $fi = Get-Item $out
+          if ($fi.Length -lt 1024) { throw "Downloaded file too small ($($fi.Length) bytes)" }
+          $dest = Join-Path $env:BUILD_DIR 'php'
+          try {
+            Expand-Archive -LiteralPath $out -DestinationPath $dest -Force
+          } catch {
+            Write-Host "Expand-Archive failed, falling back to .NET: $($_.Exception.Message)"
+            Add-Type -AssemblyName System.IO.Compression.FileSystem
+            [System.IO.Compression.ZipFile]::ExtractToDirectory((Resolve-Path $out).Path, $dest)
+          }
+
+      - name: Download & extract MariaDB
+        run: |
+          $url = $env:MARIADB_URL
+          $out = 'mariadb.zip'
+          Write-Host "Downloading $url -> $out"
+          $wc = New-Object System.Net.WebClient
+          $wc.DownloadFile($url, $out)
+          if (-not (Test-Path $out)) { throw "Download failed: $out missing" }
+          $fi = Get-Item $out
+          if ($fi.Length -lt 1024) { throw "Downloaded file too small ($($fi.Length) bytes)" }
+          $dest = Join-Path $env:BUILD_DIR 'mysql'
+          try {
+            Expand-Archive -LiteralPath $out -DestinationPath $dest -Force
+          } catch {
+            Write-Host "Expand-Archive failed, falling back to .NET: $($_.Exception.Message)"
+            Add-Type -AssemblyName System.IO.Compression.FileSystem
+            [System.IO.Compression.ZipFile]::ExtractToDirectory((Resolve-Path $out).Path, $dest)
+          }
+
+      - name: Download & extract phpMyAdmin
+        run: |
+          $url = $env:PHPMYADMIN_URL
+          $out = 'phpmyadmin.zip'
+          Write-Host "Downloading $url -> $out"
+          $wc = New-Object System.Net.WebClient
+          $wc.DownloadFile($url, $out)
+          if (-not (Test-Path $out)) { throw "Download failed: $out missing" }
+          $fi = Get-Item $out
+          if ($fi.Length -lt 1024) { throw "Downloaded file too small ($($fi.Length) bytes)" }
+          $dest = Join-Path $env:BUILD_DIR 'www\phpmyadmin'
+          try {
+            Expand-Archive -LiteralPath $out -DestinationPath $dest -Force
+          } catch {
+            Write-Host "Expand-Archive failed, falling back to .NET: $($_.Exception.Message)"
+            Add-Type -AssemblyName System.IO.Compression.FileSystem
+            [System.IO.Compression.ZipFile]::ExtractToDirectory((Resolve-Path $out).Path, $dest)
+          }
 
       - name: Copy app files & templates
         run: |
-          if (Test-Path www) { Copy-Item www\* -Destination (Join-Path $env:BUILD_DIR 'www') -Recurse -Force }
-          if (Test-Path template) { Copy-Item template\* -Destination $env:BUILD_DIR -Recurse -Force }
+          if (Test-Path www) { Copy-Item -Path (Join-Path 'www' '*') -Destination (Join-Path $env:BUILD_DIR 'www') -Recurse -Force }
+          if (Test-Path template) { Copy-Item -Path (Join-Path 'template' '*') -Destination $env:BUILD_DIR -Recurse -Force }
 
-      - name: Apply templates
+      - name: Apply templates (render placeholders)
         run: |
           $repoRoot = $env:GITHUB_WORKSPACE
+          if (-not $repoRoot) { $repoRoot = (Get-Location).Path }
           $buildRoot = (Resolve-Path $env:BUILD_DIR).Path
           $tplRoot = Join-Path $repoRoot 'template'
+          if (-not (Test-Path $tplRoot)) {
+            Write-Host "Template dir not found at $tplRoot — skipping rendering."
+            return
+          }
 
-          $phpDir = (Get-ChildItem (Join-Path $buildRoot 'php') -Directory | Select-Object -First 1).FullName
-          $mysqlDir = (Get-ChildItem (Join-Path $buildRoot 'mysql') -Directory | Sort-Object Name | Select-Object -First 1).FullName
+          # detect php dir (first directory under build/php)
+          $phpDir = (Get-ChildItem (Join-Path $buildRoot 'php') -Directory -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
+          if (-not $phpDir) { throw "PHP directory not found under $buildRoot\php" }
+
+          # detect mysql root by searching for bin\mysqld.exe recursively
+          $mysqlDirObj = Get-ChildItem (Join-Path $buildRoot 'mysql') -Directory -Recurse -ErrorAction SilentlyContinue |
+                         Where-Object { Test-Path (Join-Path $_.FullName 'bin\mysqld.exe') } |
+                         Select-Object -First 1
+          if (-not $mysqlDirObj) {
+            # fallback: maybe the archive extracted directly into mysql root
+            if (Test-Path (Join-Path $buildRoot 'mysql\bin\mysqld.exe')) {
+              $mysqlDir = (Resolve-Path (Join-Path $buildRoot 'mysql')).Path
+            } else {
+              throw "Could not locate MariaDB root (mysqld.exe)"
+            }
+          } else {
+            $mysqlDir = $mysqlDirObj.FullName
+          }
+
           $wwwDir = Join-Path $buildRoot 'www'
           New-Item -ItemType Directory -Path $wwwDir -Force | Out-Null
 
           function Render-Template($tplPath,$outPath,$replacements){
+            if (-not (Test-Path $tplPath)) { Write-Host "Template missing: $tplPath"; return }
             $text = Get-Content $tplPath -Raw
             foreach ($k in $replacements.Keys) {
               $text = $text -replace [regex]::Escape("{{" + $k + "}}"), [string]$replacements[$k]
@@ -84,32 +186,66 @@ jobs:
           Render-Template (Join-Path $tplRoot 'start.bat') (Join-Path $buildRoot 'start.bat') $repl
           Render-Template (Join-Path $tplRoot 'stop.bat') (Join-Path $buildRoot 'stop.bat') $repl
 
-      - name: Initialize MariaDB data dir
+      - name: Initialize MariaDB data dir if empty
         run: |
-          $mysqlRoot = Get-ChildItem (Join-Path $env:BUILD_DIR 'mysql') -Directory | Sort-Object Name | Select-Object -First 1
-          if (-not $mysqlRoot) { throw "MariaDB root directory not found" }
-
-          $dataDir = Join-Path $mysqlRoot.FullName 'data'
-          if (-not (Test-Path $dataDir)) { New-Item -ItemType Directory -Path $dataDir -Force | Out-Null }
-          if ((Get-ChildItem $dataDir -Recurse -ErrorAction SilentlyContinue) -eq $null) {
-            $mysqldPath = Join-Path $mysqlRoot.FullName 'bin\mysqld.exe'
-            if (-not (Test-Path $mysqldPath)) { throw "mysqld.exe not found at $mysqldPath" }
-            & $mysqldPath --initialize-insecure --basedir="$($mysqlRoot.FullName)" --datadir="$dataDir"
+          $mysqlRootObj = Get-ChildItem (Join-Path $env:BUILD_DIR 'mysql') -Directory -Recurse -ErrorAction SilentlyContinue |
+                          Where-Object { Test-Path (Join-Path $_.FullName 'bin\mysqld.exe') } |
+                          Select-Object -First 1
+          if ($mysqlRootObj) {
+            $mysqlRoot = $mysqlRootObj.FullName
+          } elseif (Test-Path (Join-Path $env:BUILD_DIR 'mysql\bin\mysqld.exe')) {
+            $mysqlRoot = (Resolve-Path (Join-Path $env:BUILD_DIR 'mysql')).Path
+          } else {
+            throw "MariaDB root directory not found under $env:BUILD_DIR\mysql"
           }
 
-      - name: Run smoke tests
+          $dataDir = Join-Path $mysqlRoot 'data'
+          Write-Host "MariaDB root: $mysqlRoot"
+          Write-Host "Data dir: $dataDir"
+
+          if (-not (Test-Path $dataDir)) { New-Item -ItemType Directory -Path $dataDir -Force | Out-Null }
+          if ((Get-ChildItem $dataDir -Recurse -ErrorAction SilentlyContinue) -eq $null) {
+            $mysqldPath = Join-Path $mysqlRoot 'bin\mysqld.exe'
+            if (-not (Test-Path $mysqldPath)) { throw "mysqld.exe not found at $mysqldPath" }
+            Write-Host "Initializing MariaDB with $mysqldPath"
+            & $mysqldPath --initialize-insecure --basedir="$mysqlRoot" --datadir="$dataDir"
+          } else {
+            Write-Host "MariaDB data dir already populated; skipping initialization."
+          }
+
+      - name: Run smoke tests (start services and check endpoints)
         run: |
           $root = (Resolve-Path $env:BUILD_DIR).Path
-          $mysqlExe = Get-ChildItem $root\mysql -Recurse -Filter mysqld.exe | Select-Object -First 1
-          $apacheExe = Join-Path $root 'apache\bin\httpd.exe'
 
-          $mysq = Start-Process -FilePath $mysqlExe.FullName -ArgumentList "--defaults-file=$($root)\mysql\my.ini" -PassThru
-          Start-Sleep -Seconds 10
-          $httpd = Start-Process -FilePath $apacheExe -ArgumentList "-f",$root+"\apache\conf\httpd.conf" -PassThru
-          Start-Sleep -Seconds 10
+          # find mysqld.exe (first match)
+          $mysqlExe = Get-ChildItem (Join-Path $root 'mysql') -Recurse -Filter mysqld.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $mysqlExe) { throw "mysqld.exe not found for smoke test" }
+          $mysqlDefaults = Join-Path (Split-Path $mysqlExe.FullName -Parent -Parent) 'my.ini'
+          if (-not (Test-Path $mysqlDefaults)) {
+            # try top-level my.ini
+            $mysqlDefaults = Join-Path $root 'mysql\my.ini'
+          }
+
+          $apacheExe = Join-Path $root 'apache\bin\httpd.exe'
+          if (-not (Test-Path $apacheExe)) { throw "httpd.exe not found at $apacheExe" }
+
+          Write-Host "Starting MariaDB..."
+          $mysq = Start-Process -FilePath $mysqlExe.FullName -ArgumentList "--defaults-file=$mysqlDefaults" -PassThru
+          Start-Sleep -Seconds 8
+
+          Write-Host "Starting Apache..."
+          $httpd = Start-Process -FilePath $apacheExe -ArgumentList "-f", (Join-Path $root "apache\conf\httpd.conf") -PassThru
+          Start-Sleep -Seconds 8
+
           try {
-            Invoke-WebRequest -Uri "http://localhost:$env:APACHE_PORT/" -TimeoutSec 15 -ErrorAction Stop | Out-Null
-            Invoke-WebRequest -Uri "http://localhost:$env:APACHE_PORT/phpmyadmin/" -TimeoutSec 15 -ErrorAction Stop | Out-Null
+            Write-Host "Checking root page..."
+            Invoke-WebRequest -Uri "http://localhost:$env:APACHE_PORT/" -TimeoutSec 20 -ErrorAction Stop | Out-Null
+            Write-Host "Checking phpMyAdmin..."
+            Invoke-WebRequest -Uri "http://localhost:$env:APACHE_PORT/phpmyadmin/" -TimeoutSec 20 -ErrorAction Stop | Out-Null
+            Write-Host "Smoke tests passed."
+          } catch {
+            Write-Host "Smoke test failed: $($_.Exception.Message)"
+            throw
           } finally {
             if ($httpd) { Stop-Process -Id $httpd.Id -Force -ErrorAction SilentlyContinue }
             if ($mysq)  { Stop-Process -Id $mysq.Id -Force -ErrorAction SilentlyContinue }
@@ -119,7 +255,9 @@ jobs:
         run: |
           $resolved = (Resolve-Path $env:BUILD_DIR).Path
           $artifact = $env:artifact_name
+          if (Test-Path $artifact) { Remove-Item $artifact -Force }
           Compress-Archive -Path (Join-Path $resolved '*') -DestinationPath $artifact -Force
+          Write-Host "Created artifact: $artifact"
 
       - name: Create release
         id: release
@@ -137,3 +275,4 @@ jobs:
           asset_path: ${{ steps.vars.outputs.artifact_name }}
           asset_name: ${{ steps.vars.outputs.artifact_name }}
           asset_content_type: application/zip
+```
